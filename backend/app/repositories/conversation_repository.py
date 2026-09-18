@@ -2,9 +2,8 @@
 
 import uuid
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.models.conversation import Conversation
 from app.models.conversation_member import ConversationMember
@@ -32,11 +31,7 @@ class ConversationRepository:
 
     async def get_by_id(self, conversation_id: uuid.UUID) -> Conversation | None:
         result = await self.db.execute(
-            select(Conversation)
-            .where(
-                Conversation.id == conversation_id,
-                Conversation.deleted_at.is_(None),
-            )
+            select(Conversation).where(Conversation.id == conversation_id)
         )
         return result.scalar_one_or_none()
 
@@ -45,10 +40,7 @@ class ConversationRepository:
         result = await self.db.execute(
             select(Conversation)
             .join(ConversationMember)
-            .where(
-                ConversationMember.user_id == user_id,
-                Conversation.deleted_at.is_(None),
-            )
+            .where(ConversationMember.user_id == user_id)
             .order_by(Conversation.updated_at.desc())
         )
         return list(result.scalars().all())
@@ -61,12 +53,5 @@ class ConversationRepository:
         for key, value in kwargs.items():
             if hasattr(conversation, key) and value is not None:
                 setattr(conversation, key, value)
-        await self.db.flush()
-        return conversation
-
-    async def soft_delete(self, conversation: Conversation) -> Conversation:
-        from datetime import datetime, timezone
-
-        conversation.deleted_at = datetime.now(timezone.utc)
         await self.db.flush()
         return conversation

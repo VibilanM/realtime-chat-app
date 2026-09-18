@@ -25,8 +25,8 @@ class UserRepository:
         result = await self.db.execute(select(User).where(User.id.in_(user_ids)))
         return list(result.scalars().all())
 
-    async def create(self, name: str, email: str, avatar_url: str | None = None) -> User:
-        user = User(name=name, email=email, avatar_url=avatar_url)
+    async def create(self, name: str, email: str) -> User:
+        user = User(name=name, email=email)
         self.db.add(user)
         await self.db.flush()
         return user

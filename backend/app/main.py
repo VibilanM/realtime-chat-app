@@ -1,7 +1,5 @@
 """FastAPI application entry point."""
 
-from contextlib import asynccontextmanager
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -22,25 +20,13 @@ from app.exceptions.exceptions import (
     NotFoundError,
     ValidationError,
 )
-from app.redis.connection import close_redis, init_redis
+from app.websocket.websocket_routes import router as websocket_router
 
 settings = get_settings()
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Manage startup and shutdown lifecycle events."""
-    # Startup
-    await init_redis()
-    yield
-    # Shutdown
-    await close_redis()
-
 
 app = FastAPI(
     title=settings.APP_NAME,
     version="0.1.0",
-    lifespan=lifespan,
 )
 
 # CORS middleware
@@ -58,11 +44,14 @@ app.add_exception_handler(ForbiddenError, forbidden_handler)
 app.add_exception_handler(ConflictError, conflict_handler)
 app.add_exception_handler(ValidationError, validation_error_handler)
 
-# Routers
+# REST API routers
 app.include_router(conversation_router, prefix="/api/v1")
 app.include_router(member_router, prefix="/api/v1")
 app.include_router(message_router, prefix="/api/v1")
 app.include_router(user_router, prefix="/api/v1")
+
+# WebSocket router
+app.include_router(websocket_router)
 
 
 @app.get("/health", tags=["Health"])

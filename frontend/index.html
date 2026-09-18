@@ -567,11 +567,18 @@
     <script>
         // ── Configuration ──────────────────────────────────────
         const API = 'http://localhost:8000/api/v1';
+        const WS_BASE = 'ws://localhost:8000';
         let currentUser = 'alice';
         let currentConvoId = null;
         let conversations = [];
         let nextCursor = null;
         let hasMore = false;
+
+        // WebSocket connection for real-time messages
+        let ws = null;
+
+        // Track message IDs we've already rendered (to avoid duplicates)
+        const renderedMessageIds = new Set();
 
         // All possible users
         const ALL_USERS = ['alice', 'bob', 'mark'];
@@ -594,6 +601,47 @@
             return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         }
 
+        // ── WebSocket ──────────────────────────────────────────
+        function connectWebSocket(conversationId) {
+            // Close any existing connection
+            closeWebSocket();
+
+            const url = `${WS_BASE}/ws/conversations/${conversationId}?user=${currentUser}`;
+            ws = new WebSocket(url);
+
+            ws.onopen = () => {
+                console.log('WebSocket connected to conversation', conversationId);
+            };
+
+            ws.onmessage = (event) => {
+                const payload = JSON.parse(event.data);
+
+                if (payload.event === 'message.created') {
+                    const msg = payload.data;
+
+                    // Only append if we're still viewing this conversation
+                    if (msg.conversation_id === currentConvoId) {
+                        appendMessage(msg);
+                    }
+                }
+            };
+
+            ws.onclose = () => {
+                console.log('WebSocket disconnected');
+            };
+
+            ws.onerror = (err) => {
+                console.error('WebSocket error:', err);
+            };
+        }
+
+        function closeWebSocket() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+        }
+
         // ── User Switching ─────────────────────────────────────
         document.getElementById('userSelector').addEventListener('click', (e) => {
             const btn = e.target.closest('.user-btn');
@@ -604,6 +652,8 @@
             currentConvoId = null;
             nextCursor = null;
             hasMore = false;
+            renderedMessageIds.clear();
+            closeWebSocket();
             loadUsers();
             loadConversations();
             // Reset chat panel
@@ -614,7 +664,7 @@
                 </div>`;
         });
 
-        // ── Load Conversations ─────────────────────────────────
+        // ── Load Conversations ────────────────────────────────
         async function loadConversations() {
             try {
                 const res = await fetch(`${API}/conversations`, { headers: headers() });
@@ -651,11 +701,12 @@
             return div.innerHTML;
         }
 
-        // ── Select Conversation ────────────────────────────────
+        // ── Select Conversation ───────────────────────────────
         async function selectConversation(id) {
             currentConvoId = id;
             nextCursor = null;
             hasMore = false;
+            renderedMessageIds.clear();
             renderConvoList();
 
             const convo = conversations.find(c => c.id === id);
@@ -684,6 +735,9 @@
             // Load members + messages
             loadMembers(id);
             await loadMessages(id, false);
+
+            // Connect WebSocket for real-time updates on this conversation
+            connectWebSocket(id);
         }
 
         // ── Load Members ───────────────────────────────────────
@@ -719,11 +773,14 @@
                 // Messages come newest-first from API; reverse for display
                 const msgs = [...(data.messages || [])].reverse();
 
+                // Track all loaded message IDs to prevent WebSocket duplicates
+                msgs.forEach(m => renderedMessageIds.add(m.id));
+
                 if (!append) {
                     area.innerHTML = '';
                 }
 
-                // If loading older (append), prepend a load-more button & messages at top
+                // If loading older (append), prepend messages at top
                 if (append) {
                     const oldScroll = area.scrollHeight;
                     const fragment = document.createDocumentFragment();
@@ -749,7 +806,7 @@
 
                 // If no messages
                 if (!append && msgs.length === 0) {
-                    area.innerHTML = `<div class="empty-state"><div class="icon">🗨️</div>No messages yet.<br>Say something!</div>`;
+                    area.innerHTML = `<div class="empty-state"><div class="icon">💬</div>No messages yet.<br>Say something!</div>`;
                 }
             } catch (err) {
                 toast(err.message);
@@ -757,15 +814,36 @@
         }
 
         function createMsgEl(m) {
-            // Determine the current user's user ID by comparing sender name
+            // Determine the current user by comparing sender name
             const isOwn = m.sender_name?.toLowerCase() === currentUser;
             const el = document.createElement('div');
             el.className = `message ${isOwn ? 'own' : 'other'}`;
+            if (m.id) el.dataset.msgId = m.id;
             el.innerHTML = `
                 <div class="msg-sender">${escapeHtml(m.sender_name || 'Unknown')}</div>
                 <div class="msg-content">${escapeHtml(m.content || '')}</div>
                 <div class="msg-time">${formatTime(m.created_at)}</div>`;
             return el;
+        }
+
+        function appendMessage(msg) {
+            if (!msg || !msg.id) return;
+            if (renderedMessageIds.has(msg.id)) return;
+
+            const area = document.getElementById('messagesArea');
+            if (!area) return;
+
+            // Secondary check in DOM to ensure no duplicate element exists
+            if (area.querySelector(`[data-msg-id="${msg.id}"]`)) {
+                renderedMessageIds.add(msg.id);
+                return;
+            }
+
+            renderedMessageIds.add(msg.id);
+            const empty = area.querySelector('.empty-state');
+            if (empty) empty.remove();
+            area.appendChild(createMsgEl(msg));
+            area.scrollTop = area.scrollHeight;
         }
 
         // ── Send Message ───────────────────────────────────────
@@ -786,14 +864,7 @@
                     throw new Error(err.detail || 'Failed to send');
                 }
                 const msg = await res.json();
-                const area = document.getElementById('messagesArea');
-                if (area) {
-                    // Remove empty state if present
-                    const empty = area.querySelector('.empty-state');
-                    if (empty) empty.remove();
-                    area.appendChild(createMsgEl(msg));
-                    area.scrollTop = area.scrollHeight;
-                }
+                appendMessage(msg);
             } catch (err) {
                 toast(err.message);
             }
@@ -829,39 +900,20 @@
             if (!name) { toast('Please enter a name'); return; }
             const desc = document.getElementById('convoDesc').value.trim() || null;
 
-            // Get selected member usernames → we need their UUIDs
-            // We'll use a trick: first fetch user list by creating without members,
-            // but actually the API seeds users and we need UUIDs.
-            // Strategy: call the API to get each user's conversations to discover their IDs.
-            // Better: just send member_ids as empty, create convo, then add members.
-            // Actually: the create endpoint accepts member_ids (UUIDs).
-            // We need the UUIDs of the selected users. Let's look them up.
-
             const selectedUsernames = [];
             document.querySelectorAll('#memberCheckboxes input[type="checkbox"]:checked').forEach(cb => {
                 selectedUsernames.push(cb.value);
             });
 
-            // Look up user UUIDs: we can get them by switching user context temporarily
-            // and hitting any endpoint... or we need a users endpoint.
-            // Simplest: create without members, then add via member endpoint.
-            // But member endpoint also needs UUIDs...
-            // 
-            // Cleanest approach: create a helper that resolves usernames to UUIDs
-            // by temporarily authing as each user and getting their membership info.
-            //
-            // Actually, let's just create the convo with no extra members first,
-            // then we'll resolve UUIDs.
-
             try {
-                // Step 1: resolve UUIDs for selected users
+                // Resolve UUIDs for selected users
                 const memberIds = [];
                 for (const username of selectedUsernames) {
                     const id = resolveUserId(username);
                     if (id) memberIds.push(id);
                 }
 
-                // Step 2: create conversation with member IDs
+                // Create conversation with member IDs
                 const res = await fetch(`${API}/conversations`, {
                     method: 'POST',
                     headers: headers(),
@@ -873,12 +925,14 @@
                     throw new Error(err.detail || 'Failed to create');
                 }
 
+                // Read the response BEFORE loadConversations (response body can only be read once)
+                const convo = await res.json();
+
                 modalOverlay.classList.remove('visible');
                 toast('Conversation created!', 'success');
                 await loadConversations();
 
                 // Auto-select the new conversation
-                const convo = await res.json();
                 if (convo.id) selectConversation(convo.id);
 
             } catch (err) {
@@ -886,15 +940,7 @@
             }
         });
 
-        // Resolve a username to a UUID by temporarily authing as that user
-        // and checking the health or any endpoint. We'll use a small trick:
-        // hit GET /conversations as that user, which triggers user seeding,
-        // then we find the user's ID from the member list of a shared convo.
-        //
-        // Simpler: since create_conversation triggers _ensure_dev_users_exist
-        // for the current user, we just need a lookup endpoint.
-        // Let's create a user ID cache that we populate eagerly.
-
+        // ── User ID Resolution ─────────────────────────────────
         const userIdCache = {};
 
         async function loadUsers() {
@@ -911,6 +957,9 @@
         function resolveUserId(username) {
             return userIdCache[username] || null;
         }
+
+        // ── Clean up WebSocket on page unload ──────────────────
+        window.addEventListener('beforeunload', closeWebSocket);
 
         // ── Init ───────────────────────────────────────────────
         (async () => {

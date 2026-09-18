@@ -28,7 +28,7 @@ class MessageRead(Base):
     )
 
     # Relationships
-    message = relationship("Message", back_populates="reads")
+    message = relationship("Message")
     user = relationship("User")
 
     def __repr__(self) -> str:

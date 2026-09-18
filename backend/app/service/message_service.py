@@ -4,14 +4,14 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.constants.enums import MessageType
-from app.exceptions.exceptions import ForbiddenError, NotFoundError, ValidationError
+from app.exceptions.exceptions import ForbiddenError, NotFoundError
 from app.models.message import Message
 from app.models.user import User
 from app.repositories.conversation_repository import ConversationRepository
 from app.repositories.member_repository import MemberRepository
 from app.repositories.message_repository import MessageRepository
-from app.schemas.message import MessageCreate, MessageUpdate
+from app.schemas.message import MessageCreate
+from app.websocket.connection_manager import manager
 
 
 class MessageService:
@@ -42,38 +42,34 @@ class MessageService:
         """Send a new message to a conversation."""
         await self._validate_membership(conversation_id, sender)
 
-        # Validate reply target if provided
-        if data.reply_to_message_id:
-            reply_msg = await self.message_repo.get_by_id(data.reply_to_message_id)
-            if reply_msg is None:
-                raise NotFoundError("Reply target message", str(data.reply_to_message_id))
-            if reply_msg.conversation_id != conversation_id:
-                raise ValidationError("Reply target message is not in this conversation")
-
+        # Insert message into PostgreSQL
         message = await self.message_repo.create(
             conversation_id=conversation_id,
             sender_id=sender.id,
             content=data.content,
             message_type=data.message_type,
-            reply_to_message_id=data.reply_to_message_id,
         )
 
-        return message
+        # Flush to get the created_at timestamp, then commit is handled by get_db
+        await self.db.flush()
 
-    async def get_message(
-        self,
-        conversation_id: uuid.UUID,
-        message_id: uuid.UUID,
-        user: User,
-    ) -> Message:
-        """Fetch a specific message."""
-        await self._validate_membership(conversation_id, user)
-
-        message = await self.message_repo.get_by_id(message_id)
-        if message is None:
-            raise NotFoundError("Message", str(message_id))
-        if message.conversation_id != conversation_id:
-            raise NotFoundError("Message", str(message_id))
+        # Broadcast to all WebSocket clients watching this conversation
+        # This happens AFTER the database insert succeeds
+        await manager.broadcast_to_conversation(
+            str(conversation_id),
+            {
+                "event": "message.created",
+                "data": {
+                    "id": str(message.id),
+                    "conversation_id": str(message.conversation_id),
+                    "sender_id": str(message.sender_id),
+                    "sender_name": sender.name,
+                    "content": message.content,
+                    "message_type": message.message_type,
+                    "created_at": message.created_at.isoformat() if message.created_at else None,
+                },
+            },
+        )
 
         return message
 
@@ -89,77 +85,6 @@ class MessageService:
 
         return await self.message_repo.list_by_conversation(
             conversation_id=conversation_id,
-            limit=limit,
-            cursor=cursor,
-        )
-
-    async def edit_message(
-        self,
-        conversation_id: uuid.UUID,
-        message_id: uuid.UUID,
-        data: MessageUpdate,
-        user: User,
-    ) -> Message:
-        """Edit a message (sender only)."""
-        await self._validate_membership(conversation_id, user)
-
-        message = await self.message_repo.get_by_id(message_id)
-        if message is None:
-            raise NotFoundError("Message", str(message_id))
-        if message.conversation_id != conversation_id:
-            raise NotFoundError("Message", str(message_id))
-
-        # Only the sender can edit
-        if message.sender_id != user.id:
-            raise ForbiddenError("You can only edit your own messages")
-
-        # Cannot edit deleted messages
-        if message.deleted_at is not None:
-            raise ValidationError("Cannot edit a deleted message")
-
-        return await self.message_repo.update(message, data.content)
-
-    async def delete_message(
-        self,
-        conversation_id: uuid.UUID,
-        message_id: uuid.UUID,
-        user: User,
-    ) -> Message:
-        """Soft-delete a message (sender or admin/owner)."""
-        await self._validate_membership(conversation_id, user)
-
-        message = await self.message_repo.get_by_id(message_id)
-        if message is None:
-            raise NotFoundError("Message", str(message_id))
-        if message.conversation_id != conversation_id:
-            raise NotFoundError("Message", str(message_id))
-
-        # Sender can delete their own, admin/owner can delete any
-        is_sender = message.sender_id == user.id
-        is_admin = await self.member_repo.is_admin_or_owner(conversation_id, user.id)
-
-        if not is_sender and not is_admin:
-            raise ForbiddenError("You can only delete your own messages (or be an admin)")
-
-        if message.deleted_at is not None:
-            raise ValidationError("Message is already deleted")
-
-        return await self.message_repo.soft_delete(message)
-
-    async def search_messages(
-        self,
-        conversation_id: uuid.UUID,
-        query: str,
-        user: User,
-        limit: int = 30,
-        cursor: str | None = None,
-    ) -> tuple[list[Message], str | None, bool]:
-        """Search messages within a conversation."""
-        await self._validate_membership(conversation_id, user)
-
-        return await self.message_repo.search(
-            conversation_id=conversation_id,
-            query=query,
             limit=limit,
             cursor=cursor,
         )

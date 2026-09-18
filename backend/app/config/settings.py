@@ -7,7 +7,6 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5433/chatdb"
-    REDIS_URL: str = "redis://localhost:6379"
 
     # App settings
     APP_NAME: str = "Realtime Chat API"

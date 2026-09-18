@@ -6,14 +6,14 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.constants.enums import MessageType
-from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.base import Base, UUIDPrimaryKeyMixin
 
 
-class Message(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+class Message(Base, UUIDPrimaryKeyMixin):
+    """Messages table — note: uses created_at only, no updated_at (DB schema)."""
     __tablename__ = "messages"
     __table_args__ = (
         Index("ix_messages_conversation_created", "conversation_id", "created_at"),
-        Index("ix_messages_conversation_id", "conversation_id", "id"),
     )
 
     conversation_id: Mapped[uuid.UUID] = mapped_column(
@@ -29,18 +29,19 @@ class Message(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     reply_to_message_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("messages.id"), nullable=True
     )
+    edited_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default="now()", nullable=False
     )
 
     # Relationships
     conversation = relationship("Conversation", back_populates="messages")
     sender = relationship("User", back_populates="messages_sent")
-    reply_to = relationship("Message", remote_side="Message.id", lazy="selectin")
-    attachments = relationship(
-        "MessageAttachment", back_populates="message", lazy="selectin"
-    )
-    reads = relationship("MessageRead", back_populates="message", lazy="noload")
 
     def __repr__(self) -> str:
         return f"<Message {self.id} type={self.message_type}>"

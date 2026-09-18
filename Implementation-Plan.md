@@ -283,13 +283,6 @@ Authorize a client to upload a media/file object to Azure Blob Storage.
 | `get_conversation(conversation_id)` | Return a single conversation's metadata |
 | `update_conversation(conversation_id, updates)` | Update name/description, publish `conversation.updated` event |
 | `delete_conversation(conversation_id)` | Soft-delete the conversation, publish `conversation.deleted` event |
-
----
-
-### MemberService
-
-| Function | Description |
-|---|---|
 | `get_members(conversation_id)` | Return active members and their roles |
 | `add_members(conversation_id, user_ids)` | Add users, prevent duplicates, publish `member.added` |
 | `remove_member(conversation_id, user_id)` | Deactivate membership (prevent owner removal), publish `member.removed` |
@@ -307,6 +300,7 @@ Authorize a client to upload a media/file object to Azure Blob Storage.
 | `edit_message(message_id, sender_id, new_content)` | Verify ownership, update content + `edited_at`, publish `message.updated` |
 | `delete_message(message_id, user_id)` | Soft-delete (`deleted_at`), publish `message.deleted` |
 | `search_messages(conversation_id, query, cursor?, limit?)` | Search messages via ILIKE / full-text, return cursor-paginated results |
+| `create_attachment(message_id, blob_name, content_type, file_size)` | Persist attachment metadata in `message_attachments` |
 
 ---
 
@@ -315,7 +309,6 @@ Authorize a client to upload a media/file object to Azure Blob Storage.
 | Function | Description |
 |---|---|
 | `request_upload(user_id, filename, content_type, file_size, category?)` | Validate file type/size, generate unique blob name, return Azure SAS upload URL |
-| `create_attachment(message_id, blob_name, content_type, file_size)` | Persist attachment metadata in `message_attachments` |
 
 ---
 
@@ -340,28 +333,3 @@ Authorize a client to upload a media/file object to Azure Blob Storage.
 | `unsubscribe(channel)` | Unsubscribe when no local connections remain for that channel |
 
 ---
-
-### ReadReceiptService
-
-| Function | Description |
-|---|---|
-| `mark_read(message_id, user_id)` | Record read timestamp in `message_reads`, publish `message.read` |
-| `get_read_info(message_id)` | Return list of users who read the message and when |
-
----
-
-### SearchService
-
-| Function | Description |
-|---|---|
-| `search(conversation_id, query, cursor?, limit?)` | ILIKE / full-text search within a conversation, cursor-paginated |
-
----
-
-### TagService *(future)*
-
-| Function | Description |
-|---|---|
-| `add_tag(message_id, tag, user_id)` | Attach a label (e.g. `#important`) to a message |
-| `remove_tag(message_id, tag)` | Remove a tag from a message |
-| `get_tags(message_id)` | List tags on a message |

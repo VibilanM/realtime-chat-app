@@ -19,7 +19,7 @@ class MessageAttachment(Base, UUIDPrimaryKeyMixin):
     file_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
     # Relationships
-    message = relationship("Message", back_populates="attachments")
+    message = relationship("Message")
 
     def __repr__(self) -> str:
         return f"<MessageAttachment {self.blob_name} ({self.content_type})>"

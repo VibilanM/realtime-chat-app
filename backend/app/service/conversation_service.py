@@ -11,7 +11,7 @@ from app.models.user import User
 from app.repositories.conversation_repository import ConversationRepository
 from app.repositories.member_repository import MemberRepository
 from app.repositories.user_repository import UserRepository
-from app.schemas.conversation import ConversationCreate, ConversationUpdate
+from app.schemas.conversation import ConversationCreate
 
 
 class ConversationService:
@@ -44,7 +44,6 @@ class ConversationService:
 
         # Add initial members
         if data.member_ids:
-            # Validate that all member IDs are real users
             users = await self.user_repo.get_by_ids(data.member_ids)
             found_ids = {u.id for u in users}
             for member_id in data.member_ids:
@@ -75,38 +74,3 @@ class ConversationService:
     async def list_conversations(self, user: User) -> list[Conversation]:
         """List all active conversations the user belongs to."""
         return await self.conversation_repo.list_by_user(user.id)
-
-    async def update_conversation(
-        self,
-        conversation_id: uuid.UUID,
-        data: ConversationUpdate,
-        user: User,
-    ) -> Conversation:
-        """Update conversation metadata (admin/owner only)."""
-        conversation = await self.conversation_repo.get_by_id(conversation_id)
-        if conversation is None:
-            raise NotFoundError("Conversation", str(conversation_id))
-
-        if not await self.member_repo.is_admin_or_owner(conversation_id, user.id):
-            raise ForbiddenError("Only admins and owners can update conversations")
-
-        update_data = data.model_dump(exclude_unset=True)
-        if update_data:
-            conversation = await self.conversation_repo.update(
-                conversation, **update_data
-            )
-
-        return conversation
-
-    async def delete_conversation(
-        self, conversation_id: uuid.UUID, user: User
-    ) -> Conversation:
-        """Soft-delete a conversation (admin/owner only)."""
-        conversation = await self.conversation_repo.get_by_id(conversation_id)
-        if conversation is None:
-            raise NotFoundError("Conversation", str(conversation_id))
-
-        if not await self.member_repo.is_admin_or_owner(conversation_id, user.id):
-            raise ForbiddenError("Only admins and owners can delete conversations")
-
-        return await self.conversation_repo.soft_delete(conversation)
