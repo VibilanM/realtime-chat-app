@@ -1,0 +1,18 @@
+# Core Framework & ASGI Server
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+
+# Database & ORM
+SQLAlchemy>=2.0.30
+asyncpg>=0.29.0
+alembic>=1.13.0
+greenlet>=3.0.0
+
+# Validation & Settings
+pydantic>=2.7.0
+pydantic-settings>=2.2.0
+python-dotenv>=1.0.0
+
+# Realtime & WebSockets
+websockets>=13.0
+redis>=5.0.0
