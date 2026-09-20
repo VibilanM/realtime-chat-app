@@ -8,6 +8,8 @@ class Settings(BaseSettings):
 
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5433/chatdb"
 
+    REDIS_URL: str = "redis://localhost:6379/0"
+
     # App settings
     APP_NAME: str = "Realtime Chat API"
     DEBUG: bool = True

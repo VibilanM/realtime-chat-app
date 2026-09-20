@@ -14,7 +14,6 @@ class ConnectionManager:
     """Manages WebSocket connections grouped by conversation ID."""
 
     def __init__(self):
-        # conversation_id (str) -> list of connected WebSocket clients
         self.active_connections: dict[str, list[WebSocket]] = {}
 
     async def connect(self, conversation_id: str, websocket: WebSocket):
