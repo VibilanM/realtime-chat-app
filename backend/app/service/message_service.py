@@ -62,7 +62,7 @@ class MessageService:
             "data": {
                 "id": str(message.id),
                 "conversation_id": str(message.conversation_id),
-                "sender_id": str(message.sender.id),
+                "sender_id": str(sender.id),
                 "sender_name": sender.name,
                 "content": message.content,
                 "message_type": message.message_type,
