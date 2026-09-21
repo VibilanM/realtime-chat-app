@@ -566,8 +566,9 @@
 
     <script>
         // ── Configuration ──────────────────────────────────────
-        const API = 'http://localhost:8000/api/v1';
-        const WS_BASE = 'ws://localhost:8000';
+        const BACKEND_URL = 'https://cgt-chat-mvp.onrender.com';
+        const API = `${BACKEND_URL}/api/v1`;
+        const WS_BASE = BACKEND_URL.replace(/^http/, 'ws'); // wss://cgt-chat-mvp.onrender.com
         let currentUser = 'alice';
         let currentConvoId = null;
         let conversations = [];
