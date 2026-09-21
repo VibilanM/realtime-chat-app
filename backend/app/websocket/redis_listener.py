@@ -23,6 +23,14 @@ async def listen_to_redis() -> None:
             await pubsub.psubscribe(channel_pattern)
             logger.info(f"Redis listener successfully subscribed to {channel_pattern}")
 
+                # pubsub.listen() yields message dicts:
+                # {
+                #   'type': 'pmessage',
+                #   'pattern': 'conversation:*',
+                #   'channel': 'conversation:<id>',
+                #   'data': '{"type": "message.created", ...}'
+                # }
+
             async for message in pubsub.listen():
                 if message["type"] != "pmessage":
                     continue
