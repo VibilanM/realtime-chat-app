@@ -1,8 +1,13 @@
 """FastAPI application entry point."""
 
+import asyncio
+from contextlib import asynccontextmanager
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.config.redis import close_redis
 from app.config.settings import get_settings
 from app.controller.conversation_controller import router as conversation_router
 from app.controller.member_controller import router as member_router
@@ -20,13 +25,50 @@ from app.exceptions.exceptions import (
     NotFoundError,
     ValidationError,
 )
+from app.websocket.redis_listener import listen_to_redis
 from app.websocket.websocket_routes import router as websocket_router
 
+logger = logging.getLogger("chat.main")
 settings = get_settings()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Application lifespan context manager.
+    
+    Startup:
+    - Spawns the Redis subscriber listener as a background asyncio task.
+    
+    Shutdown:
+    - Cancels the Redis listener task cleanly.
+    - Closes Redis connection pools.
+    """
+    # ── STARTUP ──
+    logger.info("Application starting up: launching Redis Pub/Sub listener...")
+    listener_task = asyncio.create_task(listen_to_redis())
+
+    yield  # Application runs and handles HTTP/WebSocket requests here
+
+    # ── SHUTDOWN ──
+    logger.info("Application shutting down: cancelling Redis listener...")
+    listener_task.cancel()
+    try:
+        await listener_task
+    except asyncio.CancelledError:
+        logger.info("Redis listener task cancelled successfully.")
+    except Exception as err:
+        logger.error("Error during Redis listener task cancellation: %s", err)
+
+    logger.info("Closing Redis connection pool...")
+    await close_redis()
+    logger.info("Shutdown complete.")
+
 
 app = FastAPI(
     title=settings.APP_NAME,
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 # CORS middleware
