@@ -27,22 +27,19 @@ async def _ensure_dev_users_exist(db: AsyncSession) -> None:
     await db.flush()
 
 
-async def get_current_user(
-    x_user_id: str = Header(..., description="Username of the requesting user (alice, bob, or mark)"),
-    db: AsyncSession = Depends(get_db),
-) -> User:
+async def get_user_from_username(username_raw: str, db: AsyncSession) -> User:
     """
-    Authenticate the requesting user by matching the X-User-Id header
-    against the known dev usernames.
-
-    Returns the User ORM object.
+    Core authentication logic: validates username, ensures seeding,
+    and returns the User ORM object.
+    
+    Can be called by both HTTP and WebSocket authentication layers.
     """
-    username = x_user_id.strip().lower()
+    username = username_raw.strip().lower()
 
     if username not in VALID_USERNAMES:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Unknown user '{x_user_id}'. Valid users: alice, bob, mark",
+            detail=f"Unknown user '{username_raw}'. Valid users: alice, bob, mark",
         )
 
     # Ensure dev users are seeded
@@ -60,3 +57,11 @@ async def get_current_user(
         )
 
     return user
+
+
+async def get_current_user(
+    x_user_id: str = Header(..., description="Username of the requesting user (alice, bob, or mark)"),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """Authenticate the requesting user by matching the X-User-Id header."""
+    return await get_user_from_username(x_user_id, db)
