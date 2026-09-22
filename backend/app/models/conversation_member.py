@@ -34,9 +34,18 @@ class ConversationMember(Base):
         Boolean, default=True, nullable=False
     )
 
+    # ── Read Receipt Watermark Columns ──────────────────────────────────
+    last_read_message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
+    )
+    last_read_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     # Relationships
     conversation = relationship("Conversation", back_populates="members")
     user = relationship("User", back_populates="memberships")
+    last_read_message = relationship("Message", foreign_keys=[last_read_message_id])
 
     def __repr__(self) -> str:
         return f"<ConversationMember user={self.user_id} conv={self.conversation_id} role={self.role}>"
