@@ -271,6 +271,29 @@
             text-align: right;
         }
 
+        /* ── Read Receipts Indicators ─────────────────────────── */
+        .msg-status {
+            display: inline-block;
+            margin-left: 5px;
+            font-size: 11px;
+            letter-spacing: -2px;
+            font-weight: 700;
+            vertical-align: middle;
+            user-select: none;
+            transition: color 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        /* Double gray tick = Delivered / Unread */
+        .msg-status.unread {
+            color: var(--text-muted);
+        }
+
+        /* Double blue tick = Read */
+        .msg-status.read {
+            color: #38bdf8; /* WhatsApp-style electric cyan/blue */
+            text-shadow: 0 0 6px rgba(56, 189, 248, 0.4);
+        }
+
         .load-more-btn {
             align-self: center;
             background: var(--bg-tertiary);
@@ -581,6 +604,10 @@
         // Track message IDs we've already rendered (to avoid duplicates)
         const renderedMessageIds = new Set();
 
+        // Track read receipt watermarks
+        let lastSentReadId = null;
+        let partnerLastReadId = null;
+
         // All possible users
         const ALL_USERS = ['alice', 'bob', 'mark'];
 
@@ -602,6 +629,59 @@
             return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         }
 
+        // ── Read Receipts Helpers ──────────────────────────────
+        function markLatestMessageAsRead() {
+            if (!ws || ws.readyState !== WebSocket.OPEN || !currentConvoId) return;
+
+            const area = document.getElementById('messagesArea');
+            if (!area) return;
+
+            // Find all message elements currently displayed in the chat
+            const messageNodes = area.querySelectorAll('.message[data-msg-id]');
+            if (messageNodes.length === 0) return;
+
+            // The latest message is the last element in the container
+            const latestNode = messageNodes[messageNodes.length - 1];
+            const latestMsgId = latestNode.dataset.msgId;
+
+            // Prevent sending duplicate events for the same message
+            if (!latestMsgId || latestMsgId === lastSentReadId) return;
+
+            lastSentReadId = latestMsgId;
+
+            const readEvent = {
+                type: 'message.read',
+                conversationId: currentConvoId,
+                messageId: latestMsgId
+            };
+
+            try {
+                ws.send(JSON.stringify(readEvent));
+                console.log('Emitted message.read for message:', latestMsgId);
+            } catch (err) {
+                console.warn('Could not send message.read event:', err);
+            }
+        }
+
+        function applyReadStatusUpTo(targetMessageId) {
+            const area = document.getElementById('messagesArea');
+            if (!area || !targetMessageId) return;
+
+            const ownMessages = area.querySelectorAll('.message.own[data-msg-id]');
+            for (const el of ownMessages) {
+                const statusEl = el.querySelector('.msg-status');
+                if (statusEl) {
+                    statusEl.classList.remove('unread');
+                    statusEl.classList.add('read');
+                    statusEl.title = 'Read';
+                }
+
+                if (el.dataset.msgId === targetMessageId) {
+                    break;
+                }
+            }
+        }
+
         // ── WebSocket ──────────────────────────────────────────
         function connectWebSocket(conversationId) {
             // Close any existing connection
@@ -612,17 +692,45 @@
 
             ws.onopen = () => {
                 console.log('WebSocket connected to conversation', conversationId);
+                // When socket opens, trigger read check on visible messages
+                setTimeout(markLatestMessageAsRead, 250);
             };
 
             ws.onmessage = (event) => {
-                const payload = JSON.parse(event.data);
+                let payload;
+                try {
+                    payload = JSON.parse(event.data);
+                } catch (e) {
+                    return;
+                }
 
-                if (payload.event === 'message.created') {
+                const eventType = payload.event || payload.type;
+
+                // 1. Incoming new message
+                if (eventType === 'message.created') {
                     const msg = payload.data;
-
-                    // Only append if we're still viewing this conversation
-                    if (msg.conversation_id === currentConvoId) {
+                    if (msg && msg.conversation_id === currentConvoId) {
                         appendMessage(msg);
+                        // If viewed and message was sent by someone else, mark as read
+                        if (msg.sender_name?.toLowerCase() !== currentUser) {
+                            setTimeout(markLatestMessageAsRead, 100);
+                        }
+                    }
+                }
+
+                // 2. Incoming read receipt broadcast
+                if (eventType === 'message.read') {
+                    const readData = payload.data || payload;
+                    const convoId = readData.conversation_id || readData.conversationId;
+                    if (convoId === currentConvoId) {
+                        const readerName = (readData.user_name || '').toLowerCase();
+                        // If another member read messages, update our sent messages to blue ticks
+                        if (readerName !== currentUser) {
+                            const readMsgId = readData.message_id || readData.messageId;
+                            if (readMsgId) {
+                                applyReadStatusUpTo(readMsgId);
+                            }
+                        }
                     }
                 }
             };
@@ -654,6 +762,8 @@
             nextCursor = null;
             hasMore = false;
             renderedMessageIds.clear();
+            lastSentReadId = null;
+            partnerLastReadId = null;
             closeWebSocket();
             loadUsers();
             loadConversations();
@@ -707,6 +817,8 @@
             currentConvoId = id;
             nextCursor = null;
             hasMore = false;
+            lastSentReadId = null;
+            partnerLastReadId = null;
             renderedMessageIds.clear();
             renderConvoList();
 
@@ -733,12 +845,25 @@
                 if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
             });
 
+            // Bind scroll detection for read receipts
+            const messagesArea = document.getElementById('messagesArea');
+            if (messagesArea) {
+                messagesArea.addEventListener('scroll', () => {
+                    if (messagesArea.scrollHeight - messagesArea.scrollTop - messagesArea.clientHeight < 80) {
+                        markLatestMessageAsRead();
+                    }
+                });
+            }
+
             // Load members + messages
-            loadMembers(id);
+            await loadMembers(id);
             await loadMessages(id, false);
 
             // Connect WebSocket for real-time updates on this conversation
             connectWebSocket(id);
+
+            // Trigger initial read of visible messages
+            setTimeout(markLatestMessageAsRead, 300);
         }
 
         // ── Load Members ───────────────────────────────────────
@@ -749,8 +874,17 @@
                 const data = await res.json();
                 const badge = document.getElementById('membersBadge');
                 if (badge) {
-                    const names = data.members.map(m => m.user_name || 'unknown');
-                    badge.textContent = `${names.join(', ')} (${data.count})`;
+                    const names = (data.members || []).map(m => m.user_name || 'unknown');
+                    badge.textContent = `${names.join(', ')} (${data.count || names.length})`;
+                }
+
+                // In 1-on-1 chats, identify the other member's last read message ID (if provided by backend)
+                const otherMember = (data.members || []).find(m => m.user_name?.toLowerCase() !== currentUser);
+                partnerLastReadId = otherMember?.last_read_message_id || null;
+
+                // If messages are already in DOM, apply initial read state
+                if (partnerLastReadId) {
+                    applyReadStatusUpTo(partnerLastReadId);
                 }
             } catch (e) { /* silent */ }
         }
@@ -796,6 +930,11 @@
                     area.scrollTop = area.scrollHeight;
                 }
 
+                // Apply partner's read status to messages up to their last read mark
+                if (partnerLastReadId) {
+                    applyReadStatusUpTo(partnerLastReadId);
+                }
+
                 // Add load-more button if has_more
                 if (hasMore && !area.querySelector('.load-more-btn')) {
                     const btn = document.createElement('button');
@@ -814,16 +953,25 @@
             }
         }
 
-        function createMsgEl(m) {
+        function createMsgEl(m, isRead = false) {
             // Determine the current user by comparing sender name
             const isOwn = m.sender_name?.toLowerCase() === currentUser;
             const el = document.createElement('div');
             el.className = `message ${isOwn ? 'own' : 'other'}`;
             if (m.id) el.dataset.msgId = m.id;
+
+            // Only show ticks on messages sent by the logged-in user
+            const statusTicks = isOwn 
+                ? `<span class="msg-status ${isRead ? 'read' : 'unread'}" title="${isRead ? 'Read' : 'Delivered'}">✓✓</span>` 
+                : '';
+
             el.innerHTML = `
                 <div class="msg-sender">${escapeHtml(m.sender_name || 'Unknown')}</div>
                 <div class="msg-content">${escapeHtml(m.content || '')}</div>
-                <div class="msg-time">${formatTime(m.created_at)}</div>`;
+                <div class="msg-time">
+                    ${formatTime(m.created_at)}
+                    ${statusTicks}
+                </div>`;
             return el;
         }
 
