@@ -1,5 +1,6 @@
 """WebSocket endpoint for real-time conversation updates."""
 
+import json
 import logging
 import uuid
 
@@ -14,9 +15,10 @@ from fastapi import (
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.auth import get_user_from_username
-from app.config.database import get_db
+from app.config.database import async_session_factory, get_db
 from app.repositories.conversation_repository import ConversationRepository
 from app.repositories.member_repository import MemberRepository
+from app.service.message_service import MessageService
 from app.websocket.connection_manager import manager
 
 router = APIRouter()
@@ -88,12 +90,43 @@ async def websocket_endpoint(
         },
     })
 
-    # 5. Keep connection alive and wait for disconnect
+    # 5. Keep connection alive and process incoming client frames
     try:
         while True:
-            # We listen for client frames (ping/pong or text)
-            # In this architecture, actual messages are posted via HTTP POST
-            await websocket.receive_text()
+            raw_text = await websocket.receive_text()
+            if not raw_text.strip():
+                continue
+
+            try:
+                event_payload = json.loads(raw_text)
+            except json.JSONDecodeError:
+                continue
+
+            event_type = event_payload.get("type") or event_payload.get("event")
+
+            # Handle Read Receipt Event
+            if event_type == "message.read":
+                raw_msg_id = event_payload.get("messageId") or event_payload.get("message_id")
+                if not raw_msg_id:
+                    continue
+
+                try:
+                    target_msg_uuid = uuid.UUID(str(raw_msg_id))
+                except ValueError:
+                    continue
+
+                # Process read receipt in a dedicated async DB session
+                async with async_session_factory() as session:
+                    try:
+                        svc = MessageService(session)
+                        await svc.mark_as_read(
+                            conversation_id=conv_uuid,
+                            message_id=target_msg_uuid,
+                            user=authenticated_user,
+                        )
+                    except Exception as err:
+                        logger.error("Error processing message.read event: %s", err, exc_info=True)
+
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected: user '%s' on conversation %s", user, conversation_id)
         manager.disconnect(str(conv_uuid), websocket)

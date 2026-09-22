@@ -123,11 +123,10 @@ class MessageService:
         if member is None:
             return None
 
-        # 4. Monotonic ordering check: prevent read position from moving backwards
+        # 4. Monotonic ordering check
         if member.last_read_message_id is not None:
             current_read_msg = await self.message_repo.get_by_id(member.last_read_message_id)
             if current_read_msg is not None:
-                # If incoming message is older or identical, ignore
                 if target_message.created_at <= current_read_msg.created_at:
                     return None
 
@@ -138,7 +137,7 @@ class MessageService:
         # 6. Publish real-time event to Redis
         read_payload = {
             "type": "message.read",
-            "event": "message.read",  # Backward compatibility for frontend
+            "event": "message.read",
             "data": {
                 "conversation_id": str(conversation_id),
                 "user_id": str(user.id),
