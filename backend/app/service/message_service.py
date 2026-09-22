@@ -90,3 +90,65 @@ class MessageService:
             limit=limit,
             cursor=cursor,
         )
+
+    async def mark_as_read(
+        self,
+        conversation_id: uuid.UUID,
+        message_id: uuid.UUID,
+        user: User,
+    ) -> dict | None:
+        """
+        Process a read receipt event:
+        1. Validates user membership.
+        2. Validates message exists and belongs to conversation.
+        3. Prevents read pointer from moving backwards (monotonic check).
+        4. Updates member's last_read_message_id and last_read_at.
+        5. Commits to PostgreSQL.
+        6. Publishes `message.read` event to Redis.
+        """
+        # 1. Validate membership
+        await self._validate_membership(conversation_id, user)
+
+        # 2. Validate target message exists
+        target_message = await self.message_repo.get_by_id(message_id)
+        if target_message is None:
+            return None
+
+        # Verify message belongs to the stated conversation
+        if target_message.conversation_id != conversation_id:
+            return None
+
+        # 3. Retrieve current membership record
+        member = await self.member_repo.get_member(conversation_id, user.id)
+        if member is None:
+            return None
+
+        # 4. Monotonic ordering check: prevent read position from moving backwards
+        if member.last_read_message_id is not None:
+            current_read_msg = await self.message_repo.get_by_id(member.last_read_message_id)
+            if current_read_msg is not None:
+                # If incoming message is older or identical, ignore
+                if target_message.created_at <= current_read_msg.created_at:
+                    return None
+
+        # 5. Update PostgreSQL
+        await self.member_repo.update_last_read(conversation_id, user.id, message_id)
+        await self.db.commit()
+
+        # 6. Publish real-time event to Redis
+        read_payload = {
+            "type": "message.read",
+            "event": "message.read",  # Backward compatibility for frontend
+            "data": {
+                "conversation_id": str(conversation_id),
+                "user_id": str(user.id),
+                "user_name": user.name.lower(),
+                "message_id": str(message_id),
+                "read_at": target_message.created_at.isoformat(),
+            },
+        }
+
+        channel_name = f"conversation:{str(conversation_id)}"
+        await self.redis_client.publish(channel_name, json.dumps(read_payload))
+
+        return read_payload
