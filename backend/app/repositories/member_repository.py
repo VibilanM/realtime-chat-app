@@ -2,7 +2,7 @@
 
 import uuid
 
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
@@ -102,3 +102,21 @@ class MemberRepository:
             )
         )
         return len(result.scalars().all())
+
+    async def update_last_read(
+        self,
+        conversation_id: uuid.UUID,
+        user_id: uuid.UUID,
+        message_id: uuid.UUID,
+    ) -> ConversationMember | None:
+        """
+        Update the member's last read message watermark and read timestamp.
+        """
+        member = await self.get_member(conversation_id, user_id)
+        if member is None:
+            return None
+
+        member.last_read_message_id = message_id
+        member.last_read_at = func.now()
+        await self.db.flush()
+        return member
