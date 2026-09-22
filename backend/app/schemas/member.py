@@ -33,6 +33,10 @@ class MemberResponse(BaseModel):
     user_name: str | None = None
     user_email: str | None = None
 
+    # Added read watermark fields:
+    last_read_message_id: uuid.UUID | None = None
+    last_read_at: datetime | None = None
+
 
 class MemberListResponse(BaseModel):
     """Wrapper for listing conversation members."""
