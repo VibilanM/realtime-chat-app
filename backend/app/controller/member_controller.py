@@ -32,6 +32,8 @@ def _member_to_response(member) -> MemberResponse:
         joined_at=member.joined_at,
         user_name=member.user.name if member.user else None,
         user_email=member.user.email if member.user else None,
+        last_read_message_id=member.last_read_message_id,
+        last_read_at=member.last_read_at,
     )
 
 
