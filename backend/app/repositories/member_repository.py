@@ -49,7 +49,10 @@ class MemberRepository:
     ) -> list[ConversationMember]:
         result = await self.db.execute(
             select(ConversationMember)
-            .options(joinedload(ConversationMember.user))
+            .options(
+                joinedload(ConversationMember.user),
+                joinedload(ConversationMember.last_read_message),
+            )
             .where(ConversationMember.conversation_id == conversation_id)
             .order_by(ConversationMember.joined_at)
         )

@@ -25,6 +25,7 @@ class MessageResponse(BaseModel):
     content: str | None = None
     created_at: datetime
     sender_name: str | None = None
+    is_read_by_all: bool = False
 
 
 class PaginatedMessages(BaseModel):

@@ -606,7 +606,7 @@
 
         // Track read receipt watermarks
         let lastSentReadId = null;
-        let partnerLastReadId = null;
+        let readByAllWatermarkId = null;
 
         // All possible users
         const ALL_USERS = ['alice', 'bob', 'mark'];
@@ -632,6 +632,11 @@
         // ── Read Receipts Helpers ──────────────────────────────
         function markLatestMessageAsRead() {
             if (!ws || ws.readyState !== WebSocket.OPEN || !currentConvoId) return;
+
+            // Do not mark as read if the tab is hidden or user switched to another tab
+            if (document.hidden || document.visibilityState !== 'visible') {
+                return;
+            }
 
             const area = document.getElementById('messagesArea');
             if (!area) return;
@@ -723,9 +728,11 @@
                     const readData = payload.data || payload;
                     const convoId = readData.conversation_id || readData.conversationId;
                     if (convoId === currentConvoId) {
-                        const readerName = (readData.user_name || '').toLowerCase();
-                        // If another member read messages, update our sent messages to blue ticks
-                        if (readerName !== currentUser) {
+                        // Min-Watermark: If the read_by_all watermark advanced, update our sent messages to blue ticks
+                        const readByAllId = readData.read_by_all_message_id;
+                        if (readByAllId) {
+                            applyReadStatusUpTo(readByAllId);
+                        } else if (readData.is_read_by_all) {
                             const readMsgId = readData.message_id || readData.messageId;
                             if (readMsgId) {
                                 applyReadStatusUpTo(readMsgId);
@@ -763,7 +770,7 @@
             hasMore = false;
             renderedMessageIds.clear();
             lastSentReadId = null;
-            partnerLastReadId = null;
+            readByAllWatermarkId = null;
             closeWebSocket();
             loadUsers();
             loadConversations();
@@ -818,7 +825,7 @@
             nextCursor = null;
             hasMore = false;
             lastSentReadId = null;
-            partnerLastReadId = null;
+            readByAllWatermarkId = null;
             renderedMessageIds.clear();
             renderConvoList();
 
@@ -877,15 +884,6 @@
                     const names = (data.members || []).map(m => m.user_name || 'unknown');
                     badge.textContent = `${names.join(', ')} (${data.count || names.length})`;
                 }
-
-                // In 1-on-1 chats, identify the other member's last read message ID (if provided by backend)
-                const otherMember = (data.members || []).find(m => m.user_name?.toLowerCase() !== currentUser);
-                partnerLastReadId = otherMember?.last_read_message_id || null;
-
-                // If messages are already in DOM, apply initial read state
-                if (partnerLastReadId) {
-                    applyReadStatusUpTo(partnerLastReadId);
-                }
             } catch (e) { /* silent */ }
         }
 
@@ -930,11 +928,6 @@
                     area.scrollTop = area.scrollHeight;
                 }
 
-                // Apply partner's read status to messages up to their last read mark
-                if (partnerLastReadId) {
-                    applyReadStatusUpTo(partnerLastReadId);
-                }
-
                 // Add load-more button if has_more
                 if (hasMore && !area.querySelector('.load-more-btn')) {
                     const btn = document.createElement('button');
@@ -960,9 +953,11 @@
             el.className = `message ${isOwn ? 'own' : 'other'}`;
             if (m.id) el.dataset.msgId = m.id;
 
+            const hasBeenRead = (m.is_read_by_all === true) || isRead;
+
             // Only show ticks on messages sent by the logged-in user
             const statusTicks = isOwn 
-                ? `<span class="msg-status ${isRead ? 'read' : 'unread'}" title="${isRead ? 'Read' : 'Delivered'}">✓✓</span>` 
+                ? `<span class="msg-status ${hasBeenRead ? 'read' : 'unread'}" title="${hasBeenRead ? 'Read by all' : 'Delivered'}">✓✓</span>` 
                 : '';
 
             el.innerHTML = `
@@ -1109,6 +1104,19 @@
 
         // ── Clean up WebSocket on page unload ──────────────────
         window.addEventListener('beforeunload', closeWebSocket);
+
+        // ── Mark as read when returning to this tab ────────────
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden && document.visibilityState === 'visible') {
+                markLatestMessageAsRead();
+            }
+        });
+
+        window.addEventListener('focus', () => {
+            if (!document.hidden && document.visibilityState === 'visible') {
+                markLatestMessageAsRead();
+            }
+        });
 
         // ── Init ───────────────────────────────────────────────
         (async () => {

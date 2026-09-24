@@ -2,6 +2,8 @@
 
 import uuid
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,8 +23,15 @@ router = APIRouter(
 )
 
 
-def _message_to_response(message) -> MessageResponse:
-    """Convert a Message ORM object to a response schema."""
+def _message_to_response(
+    message, read_by_all_created_at: datetime | None = None
+) -> MessageResponse:
+    """Convert a Message ORM object to a response schema, setting is_read_by_all."""
+    is_read_by_all = (
+        read_by_all_created_at is not None
+        and message.created_at is not None
+        and message.created_at <= read_by_all_created_at
+    )
     return MessageResponse(
         id=message.id,
         conversation_id=message.conversation_id,
@@ -31,6 +40,7 @@ def _message_to_response(message) -> MessageResponse:
         content=message.content,
         created_at=message.created_at,
         sender_name=message.sender.name if message.sender else None,
+        is_read_by_all=is_read_by_all,
     )
 
 
@@ -48,7 +58,12 @@ async def send_message(
 ):
     service = MessageService(db)
     message = await service.send_message(conversation_id, data, user)
-    return _message_to_response(message)
+
+    members = await service.member_repo.get_members(conversation_id)
+    read_by_all_msg = service.calculate_read_by_all(members)
+    watermark_time = read_by_all_msg.created_at if read_by_all_msg else None
+
+    return _message_to_response(message, watermark_time)
 
 
 @router.get(
@@ -64,11 +79,15 @@ async def list_messages(
     db: AsyncSession = Depends(get_db),
 ):
     service = MessageService(db)
+    members = await service.member_repo.get_members(conversation_id)
+    read_by_all_msg = service.calculate_read_by_all(members)
+    watermark_time = read_by_all_msg.created_at if read_by_all_msg else None
+
     messages, next_cursor, has_more = await service.list_messages(
         conversation_id, user, limit, cursor
     )
     return PaginatedMessages(
-        messages=[_message_to_response(m) for m in messages],
+        messages=[_message_to_response(m, watermark_time) for m in messages],
         next_cursor=next_cursor,
         has_more=has_more,
     )

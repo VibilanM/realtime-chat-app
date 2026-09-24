@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.redis import get_redis_client
 from app.exceptions.exceptions import ForbiddenError, NotFoundError
+from app.models.conversation_member import ConversationMember
 from app.models.message import Message
 from app.models.user import User
 from app.repositories.conversation_repository import ConversationRepository
@@ -22,6 +23,32 @@ class MessageService:
         self.member_repo = MemberRepository(db)
         self.conversation_repo = ConversationRepository(db)
         self.redis_client = get_redis_client()
+
+    def calculate_read_by_all(
+        self, members: list[ConversationMember]
+    ) -> Message | None:
+        """
+        Calculates the highest message read by ALL members using the Min-Watermark algorithm.
+        Returns the Message object of the minimum watermark across all members,
+        or None if at least one member has not read any message.
+        """
+        if not members:
+            return None
+
+        # In a 1-person chat (e.g. self-chat / saved notes), read by all immediately
+        if len(members) == 1:
+            return members[0].last_read_message
+
+        # In a multi-member chat, if any member has never read or sent any message,
+        # then no message can have been read by all members.
+        for m in members:
+            if m.last_read_message is None:
+                return None
+
+        # The member whose last_read_message has the earliest created_at is the bottleneck.
+        # All messages created on or before this member's watermark have been seen by everyone.
+        slowest_member = min(members, key=lambda m: m.last_read_message.created_at)
+        return slowest_member.last_read_message
 
     async def _validate_membership(
         self, conversation_id: uuid.UUID, user: User
@@ -51,10 +78,22 @@ class MessageService:
             message_type=data.message_type,
         )
 
-        # Flush to get the created_at timestamp, then commit is handled by get_db
+        # Flush to get the created_at timestamp
         await self.db.flush()
 
+        # Sender has created and therefore read their own message
+        await self.member_repo.update_last_read(conversation_id, sender.id, message.id)
+
         await self.db.commit()
+
+        # Determine if message is read by all (e.g. in a 1-member conversation)
+        members = await self.member_repo.get_members(conversation_id)
+        read_by_all_msg = self.calculate_read_by_all(members)
+        is_read_by_all = (
+            read_by_all_msg is not None
+            and message.created_at is not None
+            and message.created_at <= read_by_all_msg.created_at
+        )
 
         event_payload = {
             "type": "message.created",
@@ -67,6 +106,7 @@ class MessageService:
                 "content": message.content,
                 "message_type": message.message_type,
                 "created_at": message.created_at.isoformat() if message.created_at else None,
+                "is_read_by_all": is_read_by_all,
             },
         }
 
@@ -102,9 +142,9 @@ class MessageService:
         1. Validates user membership.
         2. Validates message exists and belongs to conversation.
         3. Prevents read pointer from moving backwards (monotonic check).
-        4. Updates member's last_read_message_id and last_read_at.
-        5. Commits to PostgreSQL.
-        6. Publishes `message.read` event to Redis.
+        4. Updates member's last_read_message_id and last_read_at in PostgreSQL.
+        5. Computes conversation Min-Watermark (the highest message read by all members).
+        6. Publishes `message.read` event to Redis with `read_by_all_message_id` and `is_read_by_all`.
         """
         # 1. Validate membership
         await self._validate_membership(conversation_id, user)
@@ -134,7 +174,17 @@ class MessageService:
         await self.member_repo.update_last_read(conversation_id, user.id, message_id)
         await self.db.commit()
 
-        # 6. Publish real-time event to Redis
+        # 6. Calculate Min-Watermark (read-by-all threshold)
+        members = await self.member_repo.get_members(conversation_id)
+        read_by_all_msg = self.calculate_read_by_all(members)
+        read_by_all_message_id = str(read_by_all_msg.id) if read_by_all_msg else None
+
+        is_target_read_by_all = (
+            read_by_all_msg is not None
+            and target_message.created_at <= read_by_all_msg.created_at
+        )
+
+        # 7. Publish real-time event to Redis
         read_payload = {
             "type": "message.read",
             "event": "message.read",
@@ -144,6 +194,8 @@ class MessageService:
                 "user_name": user.name.lower(),
                 "message_id": str(message_id),
                 "read_at": target_message.created_at.isoformat(),
+                "read_by_all_message_id": read_by_all_message_id,
+                "is_read_by_all": is_target_read_by_all,
             },
         }
 
