@@ -132,4 +132,4 @@ async def websocket_endpoint(
         manager.disconnect(str(conv_uuid), websocket)
     except Exception as err:
         logger.error("Unexpected WebSocket error on conversation %s: %s", conversation_id, err)
-        manager.disconnect(str(conv_uuid), websocket)
+        manager.disconnect(str(conv_uuid), websocket)   

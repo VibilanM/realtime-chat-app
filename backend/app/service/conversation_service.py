@@ -1,5 +1,7 @@
 """Business logic for conversations."""
 
+from __future__ import annotations
+
 import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession

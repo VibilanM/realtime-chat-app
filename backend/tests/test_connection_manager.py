@@ -1,4 +1,4 @@
-"""Test suite for WebSocket ConnectionManager demonstrating line coverage."""
+"""Test suite for WebSocket ConnectionManager."""
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock
@@ -29,6 +29,7 @@ async def test_connect_new_conversation(manager, mock_websocket):
     
     await manager.connect(conv_id, mock_websocket)
     
+
     # Verify accept was called on the socket
     mock_websocket.accept.assert_awaited_once()
     
