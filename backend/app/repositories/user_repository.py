@@ -1,5 +1,7 @@
 """Data access layer for users."""
 
+from __future__ import annotations
+
 import uuid
 
 from sqlalchemy import select

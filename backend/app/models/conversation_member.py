@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
@@ -35,10 +36,10 @@ class ConversationMember(Base):
     )
 
     # ── Read Receipt Watermark Columns ──────────────────────────────────
-    last_read_message_id: Mapped[uuid.UUID | None] = mapped_column(
+    last_read_message_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
     )
-    last_read_at: Mapped[datetime | None] = mapped_column(
+    last_read_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
 

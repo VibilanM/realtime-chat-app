@@ -1,5 +1,7 @@
 """Data access layer for conversation members."""
 
+from __future__ import annotations
+
 import uuid
 
 from sqlalchemy import select, and_, func

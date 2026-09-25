@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import DateTime, ForeignKey, Index, String, Text
 from sqlalchemy.dialects.postgresql import UUID
@@ -25,14 +26,14 @@ class Message(Base, UUIDPrimaryKeyMixin):
     message_type: Mapped[str] = mapped_column(
         String(20), nullable=False, default=MessageType.TEXT.value
     )
-    content: Mapped[str | None] = mapped_column(Text, nullable=True)
-    reply_to_message_id: Mapped[uuid.UUID | None] = mapped_column(
+    content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    reply_to_message_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("messages.id"), nullable=True
     )
-    edited_at: Mapped[datetime | None] = mapped_column(
+    edited_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    deleted_at: Mapped[datetime | None] = mapped_column(
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
